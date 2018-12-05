@@ -85,6 +85,10 @@ var (
 		name: "titusoss/ubuntu-env-label",
 		tag:  "20180621-1529540359",
 	}
+	systemdImage = testImage{
+		name: "titusoss/ubuntu-systemd-bionic",
+		tag:  "20181219-1545261266",
+	}
 )
 
 // This file still uses log as opposed to using the testing library's built-in logging framework.
@@ -136,6 +140,8 @@ func TestStandalone(t *testing.T) {
 		testTtyNegative,
 		testCachedDockerPull,
 		testMetatron,
+		testRunTmpFsMount,
+		testSystemdImageMount,
 	}
 	for _, fun := range testFunctions {
 		fullName := runtime.FuncForPC(reflect.ValueOf(fun).Pointer()).Name()
@@ -951,6 +957,36 @@ func testMetatron(t *testing.T, jobID string) {
 		// The metatron test image writes out the task identity retrieved from the metadata service to `/task-identity`
 		// Wait for 10 seconds max to give the first iteration of the service to run.
 		EntrypointOld: "grep " + jobID + " /task-identity",
+		JobID:         jobID,
+	}
+	if !mock.RunJobExpectingSuccess(ji) {
+		t.Fail()
+	}
+}
+
+// Test that `/run` is a tmpfs mount, and has the default size
+func testRunTmpFsMount(t *testing.T, jobID string) {
+	var mem int64 = 256
+	ji := &mock.JobInput{
+		ImageName:     ubuntu.name,
+		Version:       ubuntu.tag,
+		Mem:           &mem,
+		EntrypointOld: `/bin/bash -c 'findmnt -l -t tmpfs -o target,size | grep -e "/run[^/]" | grep 128M'`,
+		JobID:         jobID,
+	}
+	if !mock.RunJobExpectingSuccess(ji) {
+		t.Fail()
+	}
+}
+
+// Test for a container running a systemd labeled image that `/run/lock` is a tmpfs mount, and has the default size
+func testSystemdImageMount(t *testing.T, jobID string) {
+	var mem int64 = 256
+	ji := &mock.JobInput{
+		ImageName:     systemdImage.name,
+		Version:       systemdImage.tag,
+		Mem:           &mem,
+		EntrypointOld: `/bin/bash -c 'findmnt -l -t tmpfs -o target,size | grep -e "/run/lock[^/]" | grep 5M'`,
 		JobID:         jobID,
 	}
 	if !mock.RunJobExpectingSuccess(ji) {

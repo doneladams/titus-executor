@@ -33,6 +33,7 @@ func setupAdditionalCapabilities(c *runtimeTypes.Container, hostCfg *container.H
 
 	// Privileged containers automaticaly deactivate seccomp and friends, no need to do this
 	fuseEnabled, err := c.GetFuseEnabled()
+
 	if err != nil {
 		return err
 	}
@@ -58,9 +59,12 @@ func setupAdditionalCapabilities(c *runtimeTypes.Container, hostCfg *container.H
 	if c.TitusInfo.GetAllowNestedContainers() {
 		apparmorProfile = "docker-nested"
 		seccompProfile = "nested-container.json"
-
-		c.Env["TINI_HANDOFF"] = trueString
 		c.Env["TINI_UNSHARE"] = trueString
+	}
+
+	if c.TitusInfo.GetAllowNestedContainers() || c.IsSystemD {
+		// Tell Tini to exec systemd so it's pid 1
+		c.Env["TINI_HANDOFF"] = trueString
 	}
 
 	if apparmorProfile != "" {

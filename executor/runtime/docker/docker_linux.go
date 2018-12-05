@@ -187,9 +187,10 @@ func cleanupCgroups(cgroupPath string) error {
 }
 
 func setupContainerNesting(parentCtx context.Context, c *runtimeTypes.Container, cred ucred) error {
-	if !c.TitusInfo.GetAllowNestedContainers() {
+	if !c.IsSystemD && !c.TitusInfo.GetAllowNestedContainers() {
 		return nil
 	}
+
 	cgroupPath := filepath.Join("/proc/", strconv.FormatInt(int64(cred.pid), 10), "cgroup")
 	cgroups, err := ioutil.ReadFile(cgroupPath) // nolint: gosec
 	if err != nil {

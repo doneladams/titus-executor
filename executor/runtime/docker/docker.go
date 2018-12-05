@@ -59,8 +59,11 @@ const (
 	builtInDiskBuffer       = 1100 // In megabytes, includes extra space for /logs.
 	defaultNetworkBandwidth = 128 * MB
 	defaultKillWait         = 10 * time.Second
+	defaultRunTmpFsSize     = "134217728" // 128 MiB
+	defaultRunLockTmpFsSize = "5242880"   // 5 MiB: the default setting on Ubuntu Xenial
 	trueString              = "true"
 	jumboFrameParam         = "titusParameter.agent.allowNetworkJumbo"
+	systemdImageLabel       = "com.netflix.titus.systemd"
 )
 
 const envFileTemplateStr = `
@@ -468,6 +471,16 @@ func (r *DockerRuntime) dockerConfig(c *runtimeTypes.Container, binds []string, 
 	// Maybe set cfs bandwidth has to be called _after_
 	maybeSetCFSBandwidth(r.dockerCfg.cfsBandwidthPeriod, c, hostCfg)
 
+	// Always setup tmpfs: it's needed to ensure Metatron credentials don't persist across reboots and for SystemD to work
+	hostCfg.Tmpfs = map[string]string{
+		"/run": "rw,noexec,nosuid,size=" + defaultRunTmpFsSize,
+	}
+
+	if c.IsSystemD {
+		// systemd requires `/run/lock` to be a separate mount from `/run`
+		hostCfg.Tmpfs["/run/lock"] = "rw,noexec,nosuid,size=" + defaultRunLockTmpFsSize
+	}
+
 	if r.storageOptEnabled {
 		hostCfg.StorageOpt = map[string]string{
 			"size": fmt.Sprintf("%dM", c.Resources.Disk+builtInDiskBuffer+uint64(imageSize/MiB)),
@@ -636,6 +649,25 @@ func vpcToolPath() string {
 		panic(err)
 	}
 	return ret
+}
+
+// Use image labels to determine if the container should be configured to run SystemD
+func setSystemdRunning(log *log.Entry, imageInfo types.ImageInspect, c *runtimeTypes.Container) error {
+	l := log.WithField("imageName", c.QualifiedImageName())
+
+	if systemdBool, ok := imageInfo.Config.Labels[systemdImageLabel]; ok {
+		l.Infof("SystemD image label set to %s", systemdBool)
+		val, err := strconv.ParseBool(systemdBool)
+		if err != nil {
+			return errors.Wrap(err, "Error parsing SystemD image label")
+		}
+
+		c.IsSystemD = val
+		return nil
+	}
+
+	l.Info("SystemD image label not set: not configuring container to run SystemD")
+	return nil
 }
 
 // This will setup c.Allocation
@@ -965,6 +997,9 @@ func (r *DockerRuntime) Prepare(parentCtx context.Context, c *runtimeTypes.Conta
 		goto error
 	}
 
+	if err = setSystemdRunning(l, *myImageInfo, c); err != nil {
+		goto error
+	}
 	binds = append(binds, getLXCFsBindMounts()...)
 
 	if metatronContainerName != "" {
@@ -1339,6 +1374,7 @@ func (r *DockerRuntime) Start(parentCtx context.Context, c *runtimeTypes.Contain
 			eventCancel()
 			return "", nil, statusMessageChan, err
 		}
+
 		err = r.setupEFSMounts(ctx, c, rootFile, containerCred, efsMountInfos)
 		if err != nil {
 			eventCancel()
